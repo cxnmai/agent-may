@@ -74,7 +74,7 @@ impl ChatClient {
                 .map(|turn| ResponseMessage {
                     role: turn.role.as_str(),
                     content: vec![ResponseContent {
-                        kind: "input_text",
+                        kind: content_type_for_role(&turn.role),
                         text: turn.content.as_str(),
                     }],
                 })
@@ -196,4 +196,11 @@ fn error_message(raw: &str) -> String {
         .or_else(|| json.get("message").and_then(Value::as_str))
         .unwrap_or(trimmed)
         .to_string()
+}
+
+fn content_type_for_role(role: &str) -> &'static str {
+    match role {
+        "assistant" => "output_text",
+        _ => "input_text",
+    }
 }

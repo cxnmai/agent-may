@@ -1,12 +1,14 @@
 mod auth;
+mod config;
 mod openai;
-
-use std::io::{self, Write};
+mod storage;
+mod ui;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::openai::{ChatClient, ChatTurn};
+use crate::openai::ChatClient;
+use crate::storage::ChatStore;
 
 #[derive(Debug, Parser)]
 #[command(name = "agent-may", version, about = "A minimal terminal agent with Codex-style login")]
@@ -25,7 +27,7 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct ChatArgs {
-    #[arg(long, default_value = "gpt-5")]
+    #[arg(long, default_value = "gpt-5.4")]
     model: String,
     #[arg(long, default_value = "You are a concise terminal-based AI assistant.")]
     system_prompt: String,
@@ -41,7 +43,7 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Chat(ChatArgs {
-        model: "gpt-5".to_string(),
+        model: "gpt-5.4".to_string(),
         system_prompt: "You are a concise terminal-based AI assistant.".to_string(),
     })) {
         Command::Login => login(),
@@ -69,52 +71,10 @@ fn chat(args: ChatArgs) -> Result<()> {
     let session = auth::load_auth_session()
         .context("no stored Codex-style login found; run `agent-may login` first")?;
     let profile = auth::user_profile(&session.auth)?;
+    let config = config::AppConfig::load_or_create()?;
+    let store = ChatStore::new(&config)?;
     let client = ChatClient::new(args.model.clone(), args.system_prompt.clone())?;
-
-    println!("Model: {}", args.model);
-    if let Some(email) = profile.email {
-        println!("Signed in as: {email}");
-    }
-    if let Some(plan) = profile.plan_type {
-        println!("Plan: {plan}");
-    }
-    println!("Type `/exit` to quit.\n");
-
-    let mut turns = Vec::new();
-
-    let stdin = io::stdin();
-    loop {
-        print!("you> ");
-        io::stdout().flush().context("failed to flush stdout")?;
-
-        let mut input = String::new();
-        stdin
-            .read_line(&mut input)
-            .context("failed to read a line from stdin")?;
-        let input = input.trim();
-
-        if input.is_empty() {
-            continue;
-        }
-        if matches!(input, "/exit" | "/quit") {
-            break;
-        }
-
-        turns.push(ChatTurn {
-            role: "user".to_string(),
-            content: input.to_string(),
-        });
-
-        let answer = client.send(&turns)?;
-        println!("\nassistant> {answer}\n");
-
-        turns.push(ChatTurn {
-            role: "assistant".to_string(),
-            content: answer,
-        });
-    }
-
-    Ok(())
+    ui::run_chat_ui(client, args.model, profile, store)
 }
 
 fn logout() -> Result<()> {
@@ -130,8 +90,11 @@ fn status() -> Result<()> {
     let session = auth::load_auth_session()
         .context("no stored Codex-style login found; run `agent-may login` first")?;
     let profile = auth::user_profile(&session.auth)?;
+    let config = config::AppConfig::load_or_create()?;
 
     println!("Auth file: {}", session.auth_path.display());
+    println!("Config file: {}", config.config_path.display());
+    println!("Chats dir: {}", config.chats_dir.display());
     println!(
         "Mode: {}",
         session.auth.auth_mode.as_deref().unwrap_or("unknown")
